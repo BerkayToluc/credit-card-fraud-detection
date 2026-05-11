@@ -2,8 +2,9 @@ import pandas as pd
 import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import classification_report, f1_score, precision_score, recall_score
+from imblearn.over_sampling import SMOTE
 import joblib
 import os
 
@@ -33,9 +34,14 @@ def main():
     print("Veri seti eğitim ve test olarak bölünüyor...")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
     
-    # Random Forest modelini tanımlama ve eğitme (Hız için n_estimators=50 ve tüm çekirdekler n_jobs=-1)
-    print("Model eğitiliyor (Random Forest)... Bu işlem biraz zaman alabilir.")
-    model = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+    # SMOTE ile eğitim verisindeki sınıf dengesizliğini çözme
+    print("Eğitim verisine SMOTE uygulanarak 0 ve 1 sınıfları eşitleniyor...")
+    smote = SMOTE(random_state=42)
+    X_train, y_train = smote.fit_resample(X_train, y_train)
+    
+    # XGBoost modelini tanımlama ve eğitme
+    print("Model eğitiliyor (XGBoost)... Bu işlem biraz zaman alabilir.")
+    model = XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42, n_jobs=-1)
     model.fit(X_train, y_train)
     
     # Test verisi ile tahmin yapma

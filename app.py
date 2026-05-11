@@ -26,12 +26,13 @@ def load_data():
 def load_model():
     return joblib.load('fraud_detection_model.pkl')
 
-def process_transaction(target_class, df_raw, df_processed, model):
+def process_transaction(target_class, df_raw, df_processed, model, tab1, tab3):
     # İlgili sınıfa ait verileri filtrele
     subset_indices = df_raw[df_raw['Class'] == target_class].index
     
     if len(subset_indices) == 0:
-        st.warning("Bu sınıfa ait veri bulunamadı.")
+        with tab1:
+            st.warning("Bu sınıfa ait veri bulunamadı.")
         return
         
     # Rastgele bir indeks seç
@@ -41,45 +42,95 @@ def process_transaction(target_class, df_raw, df_processed, model):
     real_amount = df_raw.loc[random_index, 'Amount']
     real_time = df_raw.loc[random_index, 'Time']
     
-    st.subheader("İşlem Detayları")
-    
-    # Tutar ve Time değerini yan yana şık bir metrik kartı olarak göster
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric(label="İşlem Tutarı (Amount)", value=f"${real_amount:,.2f}")
-    with col2:
-        st.metric(label="İşlem Zamanı (Time)", value=f"{real_time:.0f}")
-        
-    st.markdown("**İşleme Ait Tüm Özellikler (Arka Plan Verisi):**")
-    
-    # Seçilen satırın tüm özelliklerini DataFrame olarak göster
-    # Hoca şeffafça görebilsin diye df_raw'dan class sütunu hariç hepsini alıyoruz
-    features_to_display = df_raw.loc[[random_index]].drop('Class', axis=1)
-    st.dataframe(features_to_display, use_container_width=True)
-    
-    st.markdown("---")
-    
     # Model için özellikleri df_processed'dan al (Class hariç)
-    # Özellik isimlerinin korunması için DataFrame olarak gönderiyoruz
     features_df = df_processed.drop('Class', axis=1).loc[[random_index]]
     
     # Modele tahmin yaptır ve olasılıkları hesapla
     prediction = model.predict(features_df)[0]
     probabilities = model.predict_proba(features_df)[0]
-    
-    # Modelin bu karardan yüzde kaç emin olduğu (Güven Skoru)
     confidence_score = probabilities[prediction] * 100
     
-    st.subheader("Model Tahmini")
-    if prediction == 0:
-        st.success(f"✅ GÜVENLİ İŞLEM ONAYLANDI (Modelin Eminlik Oranı: %{confidence_score:.0f})")
-    else:
-        st.error(f"🚨 DİKKAT: DOLANDIRICILIK ŞÜPHESİ! (Modelin Eminlik Oranı: %{confidence_score:.0f})")
+    with tab1:
+        st.subheader("İşlem Detayları")
+        
+        # Tutar ve Time değerini yan yana şık bir metrik kartı olarak göster
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label="İşlem Tutarı (Amount)", value=f"${real_amount:,.2f}")
+        with col2:
+            st.metric(label="İşlem Zamanı (Time)", value=f"{real_time:.0f}")
+            
+        # Seçilen satırın tüm özelliklerini DataFrame olarak göster
+        features_to_display = df_raw.loc[[random_index]].drop('Class', axis=1)
+        with st.expander("Makine Öğrenimi Arka Plan Verilerini Göster (V1-V28)"):
+            st.dataframe(features_to_display, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("Model Tahmini")
+        if prediction == 0:
+            st.success(f"✅ GÜVENLİ İŞLEM ONAYLANDI (Modelin Eminlik Oranı: %{confidence_score:.0f})")
+        else:
+            st.error(f"🚨 DİKKAT: DOLANDIRICILIK ŞÜPHESİ! (Modelin Eminlik Oranı: %{confidence_score:.0f})")
+            
+        # Güven skorunu ilerleme çubuğu ile görselleştir
+        st.progress(int(confidence_score))
+        
+    with tab3:
+        st.subheader("Modelin Karar Mekanizması")
+        st.markdown("Modelin bu işlemi sınıflandırırken en çok dikkat ettiği 5 özellik:")
+        
+        if hasattr(model, 'feature_importances_'):
+            import altair as alt
+            importances = model.feature_importances_
+            importance_df = pd.DataFrame({
+                'Özellik': features_df.columns,
+                'Önem Skoru': importances
+            }).sort_values(by='Önem Skoru', ascending=False).head(5)
+            
+            bar_color = '#ff4b4b' if prediction == 1 else '#00cc96'
+            chart = alt.Chart(importance_df).mark_bar().encode(
+                x='Önem Skoru:Q',
+                y=alt.Y('Özellik:N', sort='-x'),
+                color=alt.value(bar_color),
+                tooltip=['Özellik', 'Önem Skoru']
+            ).properties(height=250)
+            
+            st.altair_chart(chart, use_container_width=True)
+            
+    # Sorguyu geçmişe kaydetme
+    prediction_text = "Dolandırıcı (1)" if prediction == 1 else "Normal (0)"
+    true_class_text = "Dolandırıcı (1)" if target_class == 1 else "Normal (0)"
+    
+    st.session_state.query_history.append({
+        "İşlem Tutarı": f"${real_amount:,.2f}",
+        "Zaman": f"{real_time:.0f}",
+        "Gerçek Sınıf": true_class_text,
+        "Model Tahmini": prediction_text,
+        "Güven Skoru": f"%{confidence_score:.0f}"
+    })
 
 def main():
+    # Oturum geçmişini başlat (Sorgu Geçmişi için)
+    if 'query_history' not in st.session_state:
+        st.session_state.query_history = []
+
     # --- Sol Menü (Sidebar) ---
     st.sidebar.title("Kredi Kartı Dolandırıcılık Tespit Sistemi")
     st.sidebar.markdown("Bu sistem, finansal işlem verilerini analiz ederek makine öğrenimi algoritmalarıyla anormallik tespiti yapmaktadır.")
+    st.sidebar.markdown("---")
+    
+    # --- Sistem Özeti ---
+    st.sidebar.subheader("Sistem Özeti")
+    total_queries = len(st.session_state.query_history)
+    fraud_found = sum(1 for q in st.session_state.query_history if q['Model Tahmini'] == "Dolandırıcı (1)")
+    normal_approved = sum(1 for q in st.session_state.query_history if q['Model Tahmini'] == "Normal (0)")
+    
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        st.metric("Toplam Sorgu", total_queries)
+    with col2:
+        st.metric("Sahte", fraud_found)
+    st.sidebar.metric("Onaylanan Normal İşlem", normal_approved)
     st.sidebar.markdown("---")
     
     # Veri ve modeli yükle (Ana ekranda yükleme animasyonu göstermek için)
@@ -92,20 +143,40 @@ def main():
         st.info("Lütfen 'creditcard.csv' ve 'fraud_detection_model.pkl' dosyalarının uygulama ile aynı klasörde olduğundan emin olun.")
         return
 
-    st.sidebar.markdown("### Bir İşlem Seçin")
-    
-    # Butonlar sol menüde
-    btn_normal = st.sidebar.button("Rastgele Normal İşlem Getir", use_container_width=True)
-    btn_fraud = st.sidebar.button("Rastgele Dolandırıcılık İşlemi Getir", use_container_width=True)
-    
     # --- Ana Ekran ---
+    st.markdown("""
+    <h1 style='text-align: center; color: #1E3A8A;'>Kredi Kartı Dolandırıcılık Tespit Merkezi</h1>
+    """, unsafe_allow_html=True)
+    
+    tab1, tab2, tab3 = st.tabs(["🔍 Anlık Analiz Paneli", "📊 İşlem Geçmişi", "🧠 Model Açıklanabilirliği (XAI)"])
+    
+    with tab1:
+        st.markdown("### Bir İşlem Seçin")
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            btn_normal = st.button("✅ Güvenli İşlem Simüle Et", use_container_width=True)
+        with col_btn2:
+            btn_fraud = st.button("🚨 Şüpheli İşlem Simüle Et", use_container_width=True)
+        st.markdown("---")
+    
     if btn_normal:
-        process_transaction(0, df_raw, df_processed, model)
+        process_transaction(0, df_raw, df_processed, model, tab1, tab3)
     elif btn_fraud:
-        process_transaction(1, df_raw, df_processed, model)
+        process_transaction(1, df_raw, df_processed, model, tab1, tab3)
     else:
         # Başlangıç durumu
-        st.info("👈 Lütfen sol menüden analiz etmek istediğiniz bir işlem türü seçerek başlayın.")
+        with tab1:
+            st.info("👆 Lütfen analiz sürecini başlatmak için yukarıdaki butonlardan birini seçin.")
+        with tab3:
+            st.info("👈 Henüz bir işlem seçilmediği için açıklanabilirlik grafiği gösterilemiyor.")
+            
+    with tab2:
+        st.subheader("Geçmiş Sorgulamalar")
+        if len(st.session_state.query_history) > 0:
+            history_df = pd.DataFrame(st.session_state.query_history)
+            st.dataframe(history_df, use_container_width=True)
+        else:
+            st.info("Henüz sorgu yapılmadı.")
 
 if __name__ == "__main__":
     main()
